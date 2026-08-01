@@ -1,15 +1,19 @@
 package pipeline
 
-import "strings"
+import (
+	"strings"
 
-func IsValidTranscription(resp FlaskSTTResponse) bool {
-	if resp.AvgLogprob < -0.8 {
+	"github.com/zHolyWhite/MoonEngineAPI/internal/config"
+)
+
+func IsValidTranscription(resp STTResponse, cfg *config.Config) bool {
+	if resp.AvgLogprob < cfg.AvgLogprobMin {
 		return false
 	}
-	if resp.NoSpeechProb > 0.4 {
+	if resp.NoSpeechProb > cfg.NoSpeechProbMax {
 		return false
 	}
-	if len(strings.TrimSpace(resp.Text)) < 3 {
+	if len(strings.TrimSpace(resp.Text)) < cfg.MinTextLen {
 		return false
 	}
 	return true

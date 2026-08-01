@@ -1,35 +1,54 @@
 package session
 
-import "sync"
+import (
+	"sync"
+	"time"
 
-type SessionManager struct {
+	"golang.org/x/time/rate"
+
+	"github.com/zHolyWhite/MoonEngineAPI/internal/config"
+	"github.com/zHolyWhite/MoonEngineAPI/internal/pipeline"
+)
+
+type Manager struct {
 	sessions sync.Map
+	cfg      *config.Config
 }
 
-func (m *SessionManager) GetOrCreate(playerID string, srcLang, dstLang string) *PlayerSession {
-	s, loaded := m.sessions.LoadOrStore(playerID, newSession(playerID, srcLang, dstLang))
-	if !loaded {
-		go s.(*PlayerSession).runWorker()
+func NewManager(cfg *config.Config) *Manager {
+	return &Manager{cfg: cfg}
+}
+
+func (m *Manager) GetOrCreate(playerID, srcLang, dstLang string, sendFn func(string, string)) *PlayerSession {
+	new := &PlayerSession{
+		PlayerID: playerID,
+		SrcLang:  srcLang,
+		DstLang:  dstLang,
+		AudioCh:  make(chan []byte, m.cfg.AudioChanCap),
+		stopCh:   make(chan struct{}),
+		limiter:  rate.NewLimiter(rate.Every(m.cfg.RateEvery), m.cfg.RateBurst),
+		sendFn:   sendFn,
 	}
-	return s.(*PlayerSession)
+	actual, loaded := m.sessions.LoadOrStore(playerID, new)
+	if !loaded {
+		s := actual.(*PlayerSession)
+		go s.runWorker(m.cfg, pipeline.NewClient(m.cfg.FlaskBaseURL))
+	}
+	return actual.(*PlayerSession)
 }
 
-type PlayerSession struct {
-	PlayerID string
-	SrcLang  string
-	DstLang  string
-	AudioCh  chan[]byte
-	stopCh 	 chan struct[]
-	mu       sync.RMutex
-	limiter *rate.Limiter
+func (m *Manager) Remove(playerID string) {
+	if v, ok := m.sessions.LoadAndDelete(playerID); ok {
+		v.(*PlayerSession).Stop()
+	}
 }
 
-//	func (s *PlayerSession) processPipeline(audio []byte) {
-//		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-//		defer cancel()
+func (m *Manager) UpdateLangs(playerID, src, dst string) bool {
+	if v, ok := m.sessions.Load(playerID); ok {
+		v.(*PlayerSession).UpdateLangs(src, dst)
+		return true
+	}
+	return false
+}
 
-//	if !s.limiter.Allow() {
-//		log.Println("[%s] rate limit, skipping utterance", s.PlayerID)
-//	return
-//	}
-//}
+ var _ = time.Second
