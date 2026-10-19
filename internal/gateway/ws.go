@@ -89,10 +89,10 @@ func (h *WSHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	})
 
 	c := &wsConn{
-		conn:     conn,
-		scope:    scope,
-		streams:  make(map[uint32]*streamState),
-		handler:  h,
+		conn:    conn,
+		scope:   scope,
+		streams: make(map[uint32]*streamState),
+		handler: h,
 	}
 	defer c.cleanup()
 

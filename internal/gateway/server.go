@@ -10,14 +10,15 @@ import (
 )
 
 type Server struct {
-	cfg  *config.Config
-	auth *auth.Authenticator
-	log  *slog.Logger
-	ws   *WSHandler
+	cfg       *config.Config
+	auth      *auth.Authenticator
+	log       *slog.Logger
+	ws        *WSHandler
+	translate *TranslateService
 }
 
-func New(cfg *config.Config, a *auth.Authenticator, log *slog.Logger, ws *WSHandler) *Server {
-	return &Server{cfg: cfg, auth: a, log: log, ws: ws}
+func New(cfg *config.Config, a *auth.Authenticator, log *slog.Logger, ws *WSHandler, translate *TranslateService) *Server {
+	return &Server{cfg: cfg, auth: a, log: log, ws: ws, translate: translate}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -25,6 +26,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /health/live", s.live)
 	mux.Handle("GET /health/ready", s.protected(http.HandlerFunc(s.ready)))
 	mux.Handle("GET /v1/capabilities", s.protected(http.HandlerFunc(s.capabilities)))
+	mux.Handle("POST /v1/translate", s.protected(http.HandlerFunc(s.translate.Handle)))
 	mux.Handle("GET /v1/stream", s.protected(http.HandlerFunc(s.ws.Handle)))
 	return s.withRequestID(s.withRecover(mux))
 }
@@ -46,7 +48,7 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, protocol.Capabilities{
 		Contract:  protocol.ContractVersion,
-		Endpoints: []string{"/v1/capabilities", "/v1/stream", "/health/live", "/health/ready"},
+		Endpoints: []string{"/v1/capabilities", "/v1/translate", "/v1/stream", "/health/live", "/health/ready"},
 		Audio: protocol.AudioCapabilities{
 			Formats:     []string{"pcm_s16le"},
 			SampleRates: []int{48000},
