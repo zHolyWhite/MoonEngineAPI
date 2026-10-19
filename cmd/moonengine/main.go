@@ -14,6 +14,7 @@ import (
 	"github.com/zHolyWhite/MoonEngineAPI/internal/cache"
 	"github.com/zHolyWhite/MoonEngineAPI/internal/config"
 	"github.com/zHolyWhite/MoonEngineAPI/internal/gateway"
+	"github.com/zHolyWhite/MoonEngineAPI/internal/metrics"
 	"github.com/zHolyWhite/MoonEngineAPI/internal/scheduler"
 	"github.com/zHolyWhite/MoonEngineAPI/internal/session"
 	"github.com/zHolyWhite/MoonEngineAPI/internal/worker"
@@ -42,9 +43,20 @@ func main() {
 	trans := worker.NewTranslateClient(cfg.TranslateURL, 30*time.Second)
 	translationCache := cache.New(2048, 10*time.Minute)
 	flight := cache.NewFlight()
-	translateService := gateway.NewTranslateService(translationCache, flight, trans)
 
-	srv := gateway.New(cfg, auth.New(cfg.APIKeys), log, gateway.NewWSHandler(cfg, auth.New(cfg.APIKeys), sessions, sched, stt, trans, log), translateService)
+	metricsRegistry := metrics.New()
+	metricsRegistry.CacheEntries = translationCache.Len
+	translateService := gateway.NewTranslateService(translationCache, flight, trans, metricsRegistry)
+
+	srv := gateway.New(
+		cfg,
+		auth.New(cfg.APIKeys),
+		log,
+		gateway.NewWSHandler(cfg, auth.New(cfg.APIKeys), sessions, sched, stt, trans, log),
+		translateService,
+		metricsRegistry,
+	)
+
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           srv.Handler(),

@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/zHolyWhite/MoonEngineAPI/internal/cache"
+	"github.com/zHolyWhite/MoonEngineAPI/internal/metrics"
 	"github.com/zHolyWhite/MoonEngineAPI/internal/worker"
 	"github.com/zHolyWhite/MoonEngineAPI/pkg/protocol"
 )
@@ -21,13 +23,14 @@ const (
 )
 
 type TranslateService struct {
-	cache  *cache.Cache
-	flight *cache.Flight
-	trans  *worker.TranslateClient
+	cache   *cache.Cache
+	flight  *cache.Flight
+	trans   *worker.TranslateClient
+	metrics *metrics.Metrics
 }
 
-func NewTranslateService(c *cache.Cache, f *cache.Flight, trans *worker.TranslateClient) *TranslateService {
-	return &TranslateService{cache: c, flight: f, trans: trans}
+func NewTranslateService(c *cache.Cache, f *cache.Flight, trans *worker.TranslateClient, m *metrics.Metrics) *TranslateService {
+	return &TranslateService{cache: c, flight: f, trans: trans, metrics: m}
 }
 
 type translateHTTPResponse struct {
@@ -70,6 +73,9 @@ func (s *TranslateService) Handle(w http.ResponseWriter, r *http.Request) {
 
 	scope := scopeFrom(r.Context())
 	requestID := requestIDFrom(r.Context())
+	start := time.Now()
+	s.metrics.TranslateRequests.Add(1)
+
 	results := make([]worker.TranslateResult, 0, len(req.Targets))
 	missing := make([]string, 0, len(req.Targets))
 	found := make(map[string]worker.TranslateResult)
@@ -81,6 +87,7 @@ func (s *TranslateService) Handle(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(value, &result); err == nil {
 				result.Cached = true
 				found[target] = result
+				s.metrics.TranslateCached.Add(1)
 				continue
 			}
 		}
@@ -90,6 +97,7 @@ func (s *TranslateService) Handle(w http.ResponseWriter, r *http.Request) {
 	if len(missing) > 0 {
 		translated, err := s.translateMissing(r, requestID, scope, req, missing)
 		if err != nil {
+			s.metrics.TranslateFailed.Add(1)
 			writeError(w, r, protocol.CodeWorkerUnavailable, err.Error(), 0)
 			return
 		}
@@ -102,6 +110,8 @@ func (s *TranslateService) Handle(w http.ResponseWriter, r *http.Request) {
 		results = append(results, found[target])
 	}
 
+	s.metrics.TranslateDuration.Observe(float64(time.Since(start).Milliseconds()))
+
 	writeJSON(w, http.StatusOK, translateHTTPResponse{
 		RequestID: requestID,
 		Source:    req.Source,
@@ -112,7 +122,7 @@ func (s *TranslateService) Handle(w http.ResponseWriter, r *http.Request) {
 func (s *TranslateService) translateMissing(r *http.Request, requestID, scope string, req worker.TranslateRequest, missing []string) (map[string]worker.TranslateResult, error) {
 	key := cacheKey(scope, req.Source, strings.Join(missing, ","), req.Text, req.Kind)
 
-	value, err, _ := s.flight.Do(key, func() ([]byte, error) {
+	value, err, shared := s.flight.Do(key, func() ([]byte, error) {
 		resp, err := s.trans.Translate(r.Context(), worker.TranslateRequest{
 			RequestID: requestID,
 			Source:    req.Source,
@@ -130,6 +140,11 @@ func (s *TranslateService) translateMissing(r *http.Request, requestID, scope st
 		}
 		return payload, nil
 	})
+
+	if shared {
+		s.metrics.FlightShared.Add(1)
+	}
+
 	if err != nil {
 		return nil, err
 	}
