@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"net/url"
 	"os"
@@ -21,6 +22,10 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	if err := loadDotEnv(".env"); err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		ListenAddr:   getString("MOONENGINE_LISTEN", "127.0.0.1:8080"),
 		STTURL:       getString("MOONENGINE_STT_URL", ""),
@@ -53,6 +58,39 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func loadDotEnv(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		value = strings.Trim(value, `"'`)
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); !exists {
+			_ = os.Setenv(key, value)
+		}
+	}
+	return scanner.Err()
 }
 
 func (c *Config) validate() error {
@@ -110,7 +148,7 @@ func parseKeys(raw string) (map[string]string, error) {
 			return nil, fmt.Errorf("la clave de %q debe tener al menos 16 caracteres", name)
 		}
 		if _, exists := keys[name]; exists {
-			return nil, fmt.Errorf("nombre repetido en MOONENGINE_API_KEYS: %q", name)
+			return nil, fmt.Errorf("nombre repetido en MOONENGINE_API_KEYS: %q", part)
 		}
 		keys[name] = key
 	}
